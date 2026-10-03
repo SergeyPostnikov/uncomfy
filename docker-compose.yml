@@ -1,0 +1,89 @@
+services:
+
+  # -----------------------------------------------------------------------
+  # FastAPI server
+  # -----------------------------------------------------------------------
+  api:
+    build: .
+    image: uncomfy:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - models:/comfyui/models        # shared model weights
+      - output:/comfyui/output
+      - input:/comfyui/input
+      - data:/data                    # SQLite DB
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/uncomfy.db
+      - COMFY_PATH=/comfyui
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # -----------------------------------------------------------------------
+  # TaskIQ worker (same image, different entrypoint)
+  # -----------------------------------------------------------------------
+  worker:
+    image: uncomfy:latest
+    restart: unless-stopped
+    command: python -m taskiq worker uncomfy.tasks:broker
+    volumes:
+      - models:/comfyui/models
+      - output:/comfyui/output
+      - input:/comfyui/input
+      - data:/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/uncomfy.db
+      - COMFY_PATH=/comfyui
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # -----------------------------------------------------------------------
+  # Redis broker for TaskIQ
+  # -----------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+volumes:
+  models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      # point to your existing ComfyUI models folder
+      device: C:/ComfyUI/models
+  output:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: C:/ComfyUI/output
+  input:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: C:/ComfyUI/input
+  data:
+  redis_data:
