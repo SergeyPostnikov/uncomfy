@@ -19,6 +19,7 @@ dependencies = [
     "passlib[bcrypt]",
     "python-jose[cryptography]",
     "jinja2",
+    "tqdm",
 ]
 
 [project.optional-dependencies]

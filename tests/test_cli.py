@@ -194,23 +194,19 @@ class TestOutput:
 
 
 # ---------------------------------------------------------------------------
-# _bar helper
+# tqdm watch — import smoke test
 # ---------------------------------------------------------------------------
 
-class TestBar:
-    def test_empty_bar(self):
-        assert cli._bar(0, 10) == "[" + "-" * 20 + "]"
+class TestWatchImport:
+    def test_tqdm_importable(self):
+        from tqdm import tqdm
+        assert tqdm is not None
 
-    def test_full_bar(self):
-        assert cli._bar(10, 10) == "[" + "#" * 20 + "]"
-
-    def test_half_bar(self):
-        b = cli._bar(5, 10)
-        assert b.count("#") == 10
-        assert b.count("-") == 10
-
-    def test_zero_max_does_not_raise(self):
-        cli._bar(0, 0)  # must not raise ZeroDivisionError
+    def test_watch_command_registered(self):
+        p = cli._build_parser()
+        a = p.parse_args(["watch", "some-job-id"])
+        assert a.command == "watch"
+        assert a.job_id == "some-job-id"
 
 
 # ---------------------------------------------------------------------------

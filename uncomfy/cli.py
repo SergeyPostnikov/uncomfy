@@ -136,7 +136,11 @@ async def _watch(job_id: str) -> None:
     except ImportError:
         _die("websockets not installed — run: uv pip install websockets")
 
-    print(f"watching job {job_id[:8]}…")
+    from tqdm import tqdm
+
+    print(f"watching {job_id[:8]}…")
+    bar: tqdm | None = None
+
     async with websockets.connect(ws_url) as ws:
         async for raw in ws:
             msg = json.loads(raw)
@@ -146,30 +150,38 @@ async def _watch(job_id: str) -> None:
             if event == "ping":
                 continue
             if event == "status":
-                print(f"  status: {data.get('status')}")
+                tqdm.write(f"  status: {data.get('status')}")
             elif event == "progress":
                 val = data.get("value", 0)
                 mx = data.get("max", 1)
-                bar = _bar(val, mx)
-                print(f"\r  {bar} {val}/{mx}", end="", flush=True)
+                if bar is None or bar.total != mx:
+                    if bar is not None:
+                        bar.close()
+                    bar = tqdm(total=mx, unit="step", dynamic_ncols=True, colour="magenta")
+                bar.n = val
+                bar.refresh()
             elif event == "executing":
                 node = data.get("node")
-                if node:
-                    print(f"\n  executing node {node}")
+                if node and bar is not None:
+                    bar.set_postfix_str(f"node {node}")
             elif event == "execution_success":
-                print("\n  done")
+                if bar is not None:
+                    bar.n = bar.total
+                    bar.refresh()
+                    bar.close()
+                tqdm.write("  done ✓")
                 break
             elif event in ("execution_error", "execution_interrupted"):
-                print(f"\n  {event}: {data}")
+                if bar is not None:
+                    bar.close()
+                tqdm.write(f"  {event}: {data}")
                 break
             elif event == "error":
-                print(f"  error: {data.get('message')}")
+                tqdm.write(f"  error: {data.get('message')}")
                 break
 
-
-def _bar(val: int, mx: int, width: int = 20) -> str:
-    filled = int(width * val / max(mx, 1))
-    return "[" + "#" * filled + "-" * (width - filled) + "]"
+    if bar is not None:
+        bar.close()
 
 
 # ---------------------------------------------------------------------------
