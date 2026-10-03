@@ -3,6 +3,7 @@ Unit tests for StubServer — no GPU, no ComfyUI imports needed.
 """
 
 import asyncio
+import queue
 import pytest
 from unittest.mock import MagicMock
 
@@ -21,6 +22,11 @@ from uncomfy.engine import StubServer
 @pytest.fixture
 def server() -> StubServer:
     return StubServer()
+
+
+@pytest.fixture
+def thread_queue() -> queue.Queue:
+    return queue.Queue(maxsize=100)
 
 
 @pytest.fixture
@@ -109,21 +115,20 @@ class TestLastError:
 # ---------------------------------------------------------------------------
 
 class TestProgressQueue:
-    def test_progress_events_pushed_to_queue(self, server, progress_queue):
-        server.attach_progress_queue(progress_queue)
+    def test_progress_events_pushed_to_queue(self, server, thread_queue):
+        server.attach_progress_queue(thread_queue)
         server.send_sync("progress", {"value": 3, "max": 10})
-        assert not progress_queue.empty()
-        item = progress_queue.get_nowait()
+        assert not thread_queue.empty()
+        item = thread_queue.get_nowait()
         assert item["event"] == "progress"
 
-    def test_non_progress_events_not_pushed(self, server, progress_queue):
-        server.attach_progress_queue(progress_queue)
-        # int event (binary preview) should not be pushed
+    def test_non_progress_events_not_pushed(self, server, thread_queue):
+        server.attach_progress_queue(thread_queue)
         server.send_sync(99, b"data")
-        assert progress_queue.empty()
+        assert thread_queue.empty()
 
-    def test_all_progress_event_types_pushed(self, server, progress_queue):
-        server.attach_progress_queue(progress_queue)
+    def test_all_progress_event_types_pushed(self, server, thread_queue):
+        server.attach_progress_queue(thread_queue)
         interesting = [
             "progress", "executing", "execution_start",
             "execution_cached", "execution_success",
@@ -131,26 +136,91 @@ class TestProgressQueue:
         ]
         for ev in interesting:
             server.send_sync(ev, {})
-        assert progress_queue.qsize() == len(interesting)
+        assert thread_queue.qsize() == len(interesting)
 
-    def test_detach_stops_pushing(self, server, progress_queue):
-        server.attach_progress_queue(progress_queue)
+    def test_detach_stops_pushing(self, server, thread_queue):
+        server.attach_progress_queue(thread_queue)
         server.detach_progress_queue()
         server.send_sync("progress", {"value": 1})
-        assert progress_queue.empty()
+        assert thread_queue.empty()
 
     def test_full_queue_does_not_raise(self, server):
-        tiny_q: asyncio.Queue = asyncio.Queue(maxsize=1)
+        tiny_q: queue.Queue = queue.Queue(maxsize=1)
         server.attach_progress_queue(tiny_q)
         server.send_sync("progress", {"value": 1})
         server.send_sync("progress", {"value": 2})  # queue full — must not raise
 
     def test_events_still_collected_when_queue_full(self, server):
-        tiny_q: asyncio.Queue = asyncio.Queue(maxsize=1)
+        tiny_q: queue.Queue = queue.Queue(maxsize=1)
         server.attach_progress_queue(tiny_q)
         server.send_sync("progress", {"value": 1})
         server.send_sync("progress", {"value": 2})
-        assert len(server.events) == 2  # both stored even if queue dropped one
+        assert len(server.events) == 2
+
+
+# ---------------------------------------------------------------------------
+# Thread→asyncio bridge
+# ---------------------------------------------------------------------------
+
+class TestDrainThreadQueue:
+    async def test_items_forwarded_to_asyncio_queue(self):
+        from uncomfy.engine import _drain_thread_queue, _SENTINEL
+        src: queue.Queue = queue.Queue()
+        dst: asyncio.Queue = asyncio.Queue()
+
+        src.put({"event": "progress", "data": {}})
+        src.put(_SENTINEL)
+
+        await _drain_thread_queue(src, dst)
+        assert dst.qsize() == 1
+        assert dst.get_nowait()["event"] == "progress"
+
+    async def test_sentinel_stops_drain(self):
+        from uncomfy.engine import _drain_thread_queue, _SENTINEL
+        src: queue.Queue = queue.Queue()
+        dst: asyncio.Queue = asyncio.Queue()
+
+        src.put(_SENTINEL)
+        src.put({"event": "progress", "data": {}})  # should not be forwarded
+
+        await _drain_thread_queue(src, dst)
+        assert dst.empty()
+
+    async def test_full_dst_does_not_raise(self):
+        from uncomfy.engine import _drain_thread_queue, _SENTINEL
+        src: queue.Queue = queue.Queue()
+        dst: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+        src.put({"event": "progress", "data": {"value": 1}})
+        src.put({"event": "progress", "data": {"value": 2}})
+        src.put(_SENTINEL)
+
+        await _drain_thread_queue(src, dst)  # must not raise
+        assert dst.qsize() == 1
+
+    async def test_thread_sends_concurrently(self):
+        """send_sync from a real thread reaches the asyncio queue."""
+        from uncomfy.engine import _drain_thread_queue, _SENTINEL, StubServer
+        import threading
+
+        src: queue.Queue = queue.Queue()
+        dst: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        server = StubServer()
+        server.attach_progress_queue(src, loop)
+
+        def _worker():
+            for i in range(5):
+                server.send_sync("progress", {"value": i})
+            src.put(_SENTINEL)
+
+        t = threading.Thread(target=_worker)
+        t.start()
+        await _drain_thread_queue(src, dst)
+        t.join()
+
+        assert dst.qsize() == 5
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import queue
 import sys
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -70,7 +72,10 @@ class StubServer:
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
-        self._progress_queue: asyncio.Queue[dict] | None = None
+        # thread-safe queue — ComfyUI calls send_sync from its own thread
+        self._thread_queue: queue.Queue[dict] | None = None
+        # asyncio loop to bridge thread → coroutine world
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # -- ExecutionServer protocol --
 
@@ -82,10 +87,10 @@ class StubServer:
     ) -> None:
         entry: dict[str, Any] = {"event": event, "data": data}
         self.events.append(entry)
-        if self._progress_queue is not None and event in self._PROGRESS_EVENTS:
+        if self._thread_queue is not None and event in self._PROGRESS_EVENTS:
             try:
-                self._progress_queue.put_nowait(entry)
-            except asyncio.QueueFull:
+                self._thread_queue.put_nowait(entry)
+            except queue.Full:
                 logger.debug("progress queue full, dropping event %s", event)
 
     def queue_updated(self) -> None:
@@ -93,11 +98,17 @@ class StubServer:
 
     # -- Helpers --
 
-    def attach_progress_queue(self, q: asyncio.Queue[dict]) -> None:
-        self._progress_queue = q
+    def attach_progress_queue(
+        self,
+        thread_queue: queue.Queue[dict],
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
+        self._thread_queue = thread_queue
+        self._loop = loop
 
     def detach_progress_queue(self) -> None:
-        self._progress_queue = None
+        self._thread_queue = None
+        self._loop = None
 
     def clear(self) -> None:
         self.events.clear()
@@ -107,6 +118,38 @@ class StubServer:
             if e["event"] == "execution_error":
                 return e["data"]
         return None
+
+
+# ---------------------------------------------------------------------------
+# Thread → asyncio bridge
+# ---------------------------------------------------------------------------
+
+_SENTINEL = object()  # poison pill to stop _drain_thread_queue
+
+
+async def _drain_thread_queue(
+    src: queue.Queue,
+    dst: asyncio.Queue[dict],
+) -> None:
+    """
+    Forwards items from a thread-safe queue to an asyncio queue.
+    Stops when it receives _SENTINEL.
+    Runs as an asyncio Task alongside execute_async().
+    """
+    loop = asyncio.get_running_loop()
+    while True:
+        # Non-blocking poll so we yield control to the event loop regularly
+        try:
+            item = src.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0.05)
+            continue
+        if item is _SENTINEL:
+            break
+        try:
+            dst.put_nowait(item)
+        except asyncio.QueueFull:
+            pass  # caller's queue full — drop, keep draining
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +250,10 @@ class InferenceEngine:
 
         Returns history_result dict with ``outputs`` key on success.
         Raises RuntimeError on execution failure.
+
+        progress_queue — asyncio.Queue the caller reads from.
+        Internally bridged through a thread-safe queue because
+        ComfyUI calls send_sync() from its own thread.
         """
         if not self._ready or self._executor is None:
             raise RuntimeError("Engine not initialised — call await engine.initialize() first")
@@ -214,8 +261,18 @@ class InferenceEngine:
         prompt_id = prompt_id or str(uuid.uuid4())
         self.server.clear()
 
+        loop = asyncio.get_running_loop()
+
+        # Bridge: thread-safe queue → asyncio queue
+        _thread_q: queue.Queue[dict] | None = None
+        _bridge_task: asyncio.Task | None = None
+
         if progress_queue is not None:
-            self.server.attach_progress_queue(progress_queue)
+            _thread_q = queue.Queue(maxsize=256)
+            self.server.attach_progress_queue(_thread_q, loop)
+            _bridge_task = asyncio.create_task(
+                _drain_thread_queue(_thread_q, progress_queue)
+            )
 
         try:
             await self._executor.execute_async(
@@ -225,6 +282,11 @@ class InferenceEngine:
             )
         finally:
             self.server.detach_progress_queue()
+            if _thread_q is not None:
+                # sentinel to stop the drain task
+                _thread_q.put_nowait(_SENTINEL)
+            if _bridge_task is not None:
+                await _bridge_task
 
         if not self._executor.success:
             err = self.server.last_error()
