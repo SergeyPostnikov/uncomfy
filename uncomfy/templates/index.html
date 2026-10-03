@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — uncomfy{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Генерации</h1>
+
+<div class="row">
+  <button class="btn btn-primary" onclick="document.getElementById('new-job-panel').style.display='block';this.style.display='none'">
+    + Новая задача
+  </button>
+</div>
+
+<!-- New job form -->
+<div id="new-job-panel" class="card" style="display:none;margin-bottom:24px">
+  <h3 style="font-size:15px;margin-bottom:16px">Новая задача</h3>
+  <form id="submit-form" enctype="multipart/form-data">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>Workflow</label>
+        <input type="text" name="workflow" value="img2img">
+      </div>
+      <div class="form-group">
+        <label>Изображение</label>
+        <input type="file" name="image" accept="image/*" style="padding:6px 12px">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Prompt</label>
+      <textarea name="prompt" placeholder="colorize manga page, vibrant anime colors, cel shading"></textarea>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="submit" class="btn btn-primary">Запустить</button>
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('new-job-panel').style.display='none'">Отмена</button>
+    </div>
+  </form>
+  <div id="submit-status" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
+</div>
+
+<!-- Jobs table -->
+<div class="card" id="jobs-card">
+  <div id="jobs-table">
+    {% include "partials/jobs_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const form = document.getElementById('submit-form');
+const statusEl = document.getElementById('submit-status');
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  statusEl.textContent = 'Отправляем…';
+  const fd = new FormData(form);
+  const params = new URLSearchParams({
+    workflow: fd.get('workflow') || 'img2img',
+    prompt: fd.get('prompt') || '',
+  });
+  const img = fd.get('image');
+  let res;
+  if (img && img.size > 0) {
+    const body = new FormData();
+    body.append('image', img);
+    res = await fetch('/jobs?' + params, { method: 'POST', body });
+  } else {
+    res = await fetch('/jobs/json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: fd.get('workflow'), prompt: fd.get('prompt') }),
+    });
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Ошибка: ' + (err.detail || res.statusText);
+    return;
+  }
+  const job = await res.json();
+  statusEl.style.color = 'var(--success)';
+  statusEl.textContent = 'Создано: ' + job.id.slice(0, 8);
+  form.reset();
+  setTimeout(() => location.reload(), 800);
+});
+
+// Poll running jobs
+async function pollJobs() {
+  const rows = document.querySelectorAll('[data-job-status="running"],[data-job-status="pending"]');
+  if (!rows.length) return;
+  const res = await fetch('/jobs?limit=50');
+  if (!res.ok) return;
+  const jobs = await res.json();
+  const map = Object.fromEntries(jobs.map(j => [j.id, j]));
+  let changed = false;
+  rows.forEach(row => {
+    const id = row.dataset.jobId;
+    const j = map[id];
+    if (j && j.status !== row.dataset.jobStatus) changed = true;
+  });
+  if (changed) location.reload();
+}
+setInterval(pollJobs, 3000);
+</script>
+{% endblock %}

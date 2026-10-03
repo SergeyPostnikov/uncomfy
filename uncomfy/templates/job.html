@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Задача {{ job.id[:8] }} — uncomfy{% endblock %}
+
+{% block content %}
+<div class="row">
+  <a href="/" class="btn btn-ghost" style="padding:5px 12px;font-size:12px">← Назад</a>
+  <h1 class="page-title" style="margin-bottom:0">{{ job.id[:8] }}</h1>
+  <span class="badge badge-{{ job.status }}" style="font-size:13px">{{ job.status }}</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+  <div class="card">
+    <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;margin-bottom:12px">Детали</h3>
+    <table style="font-size:13px">
+      <tr><td style="color:var(--muted);padding:4px 12px 4px 0">Workflow</td><td>{{ job.workflow }}</td></tr>
+      <tr><td style="color:var(--muted);padding:4px 12px 4px 0">Создано</td><td>{{ job.created_at }}</td></tr>
+      {% if job.started_at %}
+      <tr><td style="color:var(--muted);padding:4px 12px 4px 0">Начато</td><td>{{ job.started_at }}</td></tr>
+      {% endif %}
+      {% if job.finished_at %}
+      <tr><td style="color:var(--muted);padding:4px 12px 4px 0">Завершено</td><td>{{ job.finished_at }}</td></tr>
+      {% endif %}
+      {% if job.duration_sec %}
+      <tr><td style="color:var(--muted);padding:4px 12px 4px 0">Время</td><td>{{ "%.1f"|format(job.duration_sec) }}s</td></tr>
+      {% endif %}
+    </table>
+
+    {% if job.prompt %}
+    <div style="margin-top:16px">
+      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;margin-bottom:6px">Prompt</div>
+      <div style="background:var(--bg);border-radius:6px;padding:10px 12px;font-size:13px;line-height:1.5">{{ job.prompt }}</div>
+    </div>
+    {% endif %}
+
+    {% if job.error %}
+    <div style="margin-top:16px">
+      <div style="color:var(--danger);font-size:11px;text-transform:uppercase;margin-bottom:6px">Ошибка</div>
+      <div style="background:#1e1010;border-radius:6px;padding:10px 12px;font-size:12px;font-family:monospace;color:var(--danger)">{{ job.error }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;margin-bottom:12px">Результат</h3>
+
+    {% if job.status == 'done' and job.output_path %}
+      {% set filename = job.output_path.replace('\\', '/').split('/')[-1] %}
+      <img src="/output/{{ filename }}" alt="output"
+           style="width:100%;border-radius:6px;display:block;margin-bottom:12px">
+      <a href="/output/{{ filename }}" download class="btn btn-primary">↓ Скачать</a>
+    {% elif job.status in ('pending', 'running') %}
+      <div id="progress-wrap">
+        <p style="color:var(--muted);margin-bottom:12px" id="progress-text">
+          {% if job.status == 'pending' %}Ожидает воркера…{% else %}Генерируется…{% endif %}
+        </p>
+        <div class="progress-bar-wrap" style="width:100%;height:8px">
+          <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+        </div>
+        <p id="step-text" style="color:var(--muted);font-size:12px;margin-top:6px"></p>
+      </div>
+    {% else %}
+      <p style="color:var(--muted)">Нет результата.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if job.status in ('pending', 'running') %}
+<script>
+const jobId = "{{ job.id }}";
+const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws/' + jobId;
+const bar = document.getElementById('progress-bar');
+const txt = document.getElementById('progress-text');
+const step = document.getElementById('step-text');
+let ws;
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.event === 'ping') return;
+    if (msg.event === 'status') {
+      txt.textContent = msg.data.status === 'running' ? 'Генерируется…' : 'Ожидает…';
+    } else if (msg.event === 'progress') {
+      const pct = Math.round(100 * msg.data.value / Math.max(msg.data.max, 1));
+      bar.style.width = pct + '%';
+      step.textContent = `Шаг ${msg.data.value} / ${msg.data.max}`;
+    } else if (msg.event === 'executing') {
+      if (msg.data.node) step.textContent = 'Нода ' + msg.data.node;
+    } else if (msg.event === 'execution_success') {
+      location.reload();
+    } else if (msg.event === 'execution_error') {
+      txt.textContent = 'Ошибка: ' + (msg.data.exception_message || '');
+      txt.style.color = 'var(--danger)';
+    }
+  };
+  ws.onclose = () => { setTimeout(connect, 3000); };
+}
+connect();
+</script>
+{% endif %}
+{% endblock %}

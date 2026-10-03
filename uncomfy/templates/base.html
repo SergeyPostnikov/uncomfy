@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}uncomfy{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1f;
+      --border: #2e2e38;
+      --accent: #7c6af7;
+      --accent-dim: #5a4dd4;
+      --text: #e4e4ef;
+      --muted: #7a7a94;
+      --danger: #e05656;
+      --success: #56c47e;
+      --warn: #e0a956;
+      --radius: 8px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .navbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .navbar .logo { font-weight: 700; font-size: 16px; color: var(--text); letter-spacing: -0.5px; }
+    .navbar .spacer { flex: 1; }
+    .navbar .user { color: var(--muted); font-size: 13px; }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 16px; border-radius: var(--radius);
+      border: none; cursor: pointer; font-size: 13px; font-weight: 500;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-danger { background: var(--danger); color: #fff; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-size: 14px;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge-pending  { background: #2e2e1a; color: var(--warn); }
+    .badge-running  { background: #1a2636; color: #56a8e0; }
+    .badge-done     { background: #1a2e1f; color: var(--success); }
+    .badge-failed   { background: #2e1a1a; color: var(--danger); }
+    .badge-cancelled{ background: #22222a; color: var(--muted); }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; text-align: left; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    td { border-bottom: 1px solid var(--border); vertical-align: middle; }
+
+    .alert {
+      padding: 10px 14px; border-radius: var(--radius);
+      margin-bottom: 16px; font-size: 13px;
+    }
+    .alert-error { background: #2e1a1a; border: 1px solid var(--danger); color: var(--danger); }
+
+    .progress-bar-wrap { background: var(--border); border-radius: 4px; height: 6px; overflow: hidden; width: 200px; }
+    .progress-bar { height: 100%; background: var(--accent); transition: width .2s; }
+
+    .page-title { font-size: 22px; font-weight: 700; margin-bottom: 24px; }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<nav class="navbar">
+  <span class="logo">⚡ uncomfy</span>
+  <span class="spacer"></span>
+  {% if user %}
+  <span class="user">{{ user.username }}</span>
+  <form action="/logout" method="post" style="display:inline">
+    <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px">выйти</button>
+  </form>
+  {% else %}
+  <a href="/login" class="btn btn-ghost" style="padding:5px 12px;font-size:12px">войти</a>
+  {% endif %}
+</nav>
+<div class="container">
+  {% block content %}{% endblock %}
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

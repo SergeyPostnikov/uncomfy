@@ -4,8 +4,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from .database import Base
@@ -19,10 +19,27 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    jobs: Mapped[list["Job"]] = relationship("Job", back_populates="owner", lazy="select")
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
+    owner: Mapped["User | None"] = relationship("User", back_populates="jobs")
 
     # Status lifecycle: pending → running → done | failed | cancelled
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)

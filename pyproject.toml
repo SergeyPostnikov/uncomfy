@@ -16,6 +16,9 @@ dependencies = [
     "pydantic-settings",
     "httpx",
     "python-multipart",
+    "passlib[bcrypt]",
+    "python-jose[cryptography]",
+    "jinja2",
 ]
 
 [project.optional-dependencies]
